@@ -1,0 +1,27 @@
+name: 'Check Pull Request Labels'
+author: 'Martine S. Lenders'
+description: 'Checks if certain labels are set or not set and allows conditions'
+inputs:
+  set_labels:
+    description: 'List of labels required to be set'
+    required: false
+    default: ''
+  unset_labels:
+    description: 'List of labels required not to be set'
+    required: false
+    default: ''
+  cond_labels:
+    description: 'List of (label,condition) tuples for labels introducing a condition'
+    required: false
+    default: ''
+  access_token:
+    description: 'A GitHub personal access tokens for private repositories'
+    required: false
+    default: ''
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.set_labels }}
+    - ${{ inputs.unset_labels }}
+    - ${{ inputs.cond_labels }}
