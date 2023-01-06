@@ -18,6 +18,10 @@ inputs:
     description: 'A GitHub personal access tokens for private repositories'
     required: false
     default: ''
+  missing_approvals_label:
+    description: '(optional) label to be set if the review approval count condition fails'
+    required: false
+    default: ''
 runs:
   using: 'docker'
   image: 'Dockerfile'
@@ -25,3 +29,4 @@ runs:
     - ${{ inputs.set_labels }}
     - ${{ inputs.unset_labels }}
     - ${{ inputs.cond_labels }}
+    - ${{ inputs.missing_approvals_label }}

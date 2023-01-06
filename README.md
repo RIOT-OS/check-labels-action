@@ -26,6 +26,11 @@ Comma-separated list of (label,condition) tuples for labels introducing a
 condition. Optional. Globing syntax is possible for the label name, as defined
 in [fnmatch].
 
+### `missing_approvals_label`
+Name of a label that this action will set/unset according to the state of
+required approvals. The label will be set if approvals are missing, and unset
+if there are sufficient approvals.
+
 #### Supported conditions
 - `review.approvals>x`: If the label is set in the Pull Request it requires more
   than `x` approving reviews for the action to succeed
