@@ -170,31 +170,45 @@ def parse_condition(condition):
     return [e.strip() for e in elems]
 
 
-def check_review_approvals(pull, condition):
+def check_review_approvals(pull, condition, missing_approvals_label):
     condition[1] = int(condition[1])
     approvals = 0
     for review in pull.get_reviews():
         if review.state == "APPROVED":
             approvals += 1
             if approvals > condition[1]:
+                print(
+                    f"PR#{pull} has {approvals}/{condition[1] + 1} approvals,"
+                    f" removing label '{missing_approvals_label}'"
+                )
+                if missing_approvals_label:
+                    pull.remove_from_labels(missing_approvals_label)
                 return True
+
+    if missing_approvals_label and condition[1] > 0:
+        print(
+            f"PR#{pull} has only {approvals}/{condition[1] + 1} approvals,"
+            f" setting label '{missing_approvals_label}'"
+        )
+        pull.add_to_labels(missing_approvals_label)
+
     return False
 
 
 VALID_CONDITIONS = {"review.approvals": check_review_approvals}
 
 
-def check_condition(pull, condition):
+def check_condition(pull, condition, missing_approvals_label):
     elems = parse_condition(condition)
     try:
-        return VALID_CONDITIONS[elems[0]](pull, elems)
+        return VALID_CONDITIONS[elems[0]](pull, elems, missing_approvals_label)
     except KeyError:
         # We don't want the original traceback here
         # pylint: disable=raise-missing-from
         raise ValueError(f"Unrecognized condition {condition}")
 
 
-def check_labels(set_labels, unset_labels, cond_labels, pull):
+def check_labels(set_labels, unset_labels, cond_labels, missing_approvals_label, pull):
     pull_labels = [label.name for label in pull.get_labels()]
     set_labels_check = [False for label in set_labels]
     for pull_label in pull_labels:
@@ -208,11 +222,12 @@ def check_labels(set_labels, unset_labels, cond_labels, pull):
     if not all(set_labels_check):
         print(f"{', '.join(set_labels)} are expected to be set")
         return 1
+
     res = 0
     for cond_label, condition in cond_labels:
         for pull_label in pull_labels:
             if fnmatch.fnmatch(pull_label, cond_label) and not check_condition(
-                pull, condition
+                pull, condition, missing_approvals_label
             ):
                 print(f"Condition {condition} for label {pull_label} not fulfilled")
                 # favor listing all failed conditions over early exit
@@ -246,15 +261,37 @@ def main():
             "where x is a positive number"
         ),
     )
+    parser.add_argument(
+        "missing_approvals_label",
+        default="",
+        type=str,
+        help="Name of label reflecting the approval status,"
+        "will be set while approvals are missing"
+        "default: '' (no label is managed). ",
+    )
     args = parser.parse_args()
 
     repo_name = os.environ["GITHUB_REPOSITORY"]
     repo = github.Github(os.environ.get("INPUT_ACCESS_TOKEN", None)).get_repo(repo_name)
 
+    if args.missing_approvals_label:
+        # turn label string into label object
+        try:
+            missing_approvals_label = repo.get_label(args.missing_approvals_label)
+        except github.GithubException:
+            print(
+                f"Error getting label '{args.missing_approvals_label}'"
+                " from github. Does it exist?"
+            )
+            return 1
+    else:
+        missing_approvals_label = None
+
     return check_labels(
         args.set_labels,
         args.unset_labels,
         args.cond_labels,
+        missing_approvals_label,
         repo.get_pull(get_pull_no(os.environ["GITHUB_REF"])),
     )
 
@@ -344,15 +381,15 @@ if pytest:  # noqa: C901
     )
     def test_check_review_approvals(value, reviews, exp):
         pull = MockPull(reviews=[MockReview(state) for state in reviews])
-        assert check_review_approvals(pull, value) == exp
+        assert check_review_approvals(pull, value, "") == exp
 
     def test_check_condition(monkeypatch):
         pull = MockPull()
         monkeypatch.setattr(
             sys.modules[__name__], "parse_condition", lambda x: ["test", 1]
         )
-        monkeypatch.setitem(VALID_CONDITIONS, "test", lambda x, y: True)
-        assert check_condition(pull, "test > 1")
+        monkeypatch.setitem(VALID_CONDITIONS, "test", lambda x, y, z: True)
+        assert check_condition(pull, "test > 1", "")
 
     def test_check_condition_invalid(monkeypatch):
         pull = MockPull()
@@ -362,37 +399,39 @@ if pytest:  # noqa: C901
         if "test" in VALID_CONDITIONS:
             monkeypatch.delitem(VALID_CONDITIONS, "test", lambda x, y: True)
         with pytest.raises(ValueError):
-            check_condition(pull, "test > 1")
+            check_condition(pull, "test > 1", "")
 
     @pytest.mark.parametrize(
-        "set_labels, unset_labels, cond_labels, cond_res, pull_labels, exp",
+        "set_labels, unset_labels, cond_labels, cond_res, pull_labels, "
+        "missing_approvals_label, exp",
         [
-            ([], [], [], False, [], 0),
-            ([], [], [], False, ["lalala"], 0),
-            ([], [], [], False, ["foobar"], 0),
-            ([], [], [], True, [], 0),
-            ([], [], [], True, ["lalala", "yes"], 0),
-            ([], [], [], True, ["foobar"], 0),
-            ([], [], [("foobar", "test>1")], False, [], 0),
-            ([], [], [("foobar", "test>1")], False, ["lalala"], 0),
-            ([], [], [("foobar", "test > 1")], False, ["lalala", "foobar"], 1),
-            ([], [], [("foobar", "test>1")], True, [], 0),
-            ([], [], [("foobar", "test>1")], True, ["lalala"], 0),
-            ([], [], [("foobar", "test>1")], True, ["lalala", "foobar"], 0),
-            ([], ["don't merge"], [], False, [], 0),
-            ([], ["don't merge"], [], False, ["lalala"], 0),
-            ([], ["don't merge"], [], False, ["lalala", "don't merge"], 1),
-            ([], ["don't merge"], [], True, [], 0),
-            ([], ["don't merge"], [], True, ["lalala"], 0),
-            ([], ["don't merge"], [], True, ["lalala", "don't merge"], 1),
-            ([], ["don't merge"], [("foobar", "test>1")], False, [], 0),
-            ([], ["don't merge"], [("foobar", "test>1")], False, ["lalala"], 0),
+            ([], [], [], False, [], "", 0),
+            ([], [], [], False, ["lalala"], "", 0),
+            ([], [], [], False, ["foobar"], "", 0),
+            ([], [], [], True, [], "", 0),
+            ([], [], [], True, ["lalala", "yes"], "", 0),
+            ([], [], [], True, ["foobar"], "", 0),
+            ([], [], [("foobar", "test>1")], False, [], "", 0),
+            ([], [], [("foobar", "test>1")], False, ["lalala"], "", 0),
+            ([], [], [("foobar", "test > 1")], False, ["lalala", "foobar"], "", 1),
+            ([], [], [("foobar", "test>1")], True, [], "", 0),
+            ([], [], [("foobar", "test>1")], True, ["lalala"], "", 0),
+            ([], [], [("foobar", "test>1")], True, ["lalala", "foobar"], "", 0),
+            ([], ["don't merge"], [], False, [], "", 0),
+            ([], ["don't merge"], [], False, ["lalala"], "", 0),
+            ([], ["don't merge"], [], False, ["lalala", "don't merge"], "", 1),
+            ([], ["don't merge"], [], True, [], "", 0),
+            ([], ["don't merge"], [], True, ["lalala"], "", 0),
+            ([], ["don't merge"], [], True, ["lalala", "don't merge"], "", 1),
+            ([], ["don't merge"], [("foobar", "test>1")], False, [], "", 0),
+            ([], ["don't merge"], [("foobar", "test>1")], False, ["lalala"], "", 0),
             (
                 [],
                 ["don't merge"],
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar"],
+                "",
                 1,
             ),
             (
@@ -401,16 +440,18 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar", "don't merge"],
+                "",
                 1,
             ),
-            ([], ["don't merge"], [("foobar", "test>1")], True, [], 0),
-            ([], ["don't merge"], [("foobar", "test>1")], True, ["lalala"], 0),
+            ([], ["don't merge"], [("foobar", "test>1")], True, [], "", 0),
+            ([], ["don't merge"], [("foobar", "test>1")], True, ["lalala"], "", 0),
             (
                 [],
                 ["don't merge"],
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar"],
+                "",
                 0,
             ),
             (
@@ -419,26 +460,28 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar", "don't merge"],
+                "",
                 1,
             ),
-            (["yes"], [], [], False, [], 1),
-            (["yes"], [], [], False, ["lalala"], 1),
-            (["yes"], [], [], False, ["lalala", "don't merge"], 1),
-            (["yes*"], [], [], False, ["lalala", "don't merge", "yes"], 0),
-            (["yes"], [], [], True, [], 1),
-            (["yes"], [], [], True, ["lalala"], 1),
-            (["yes"], [], [], True, ["lalala", "don't merge"], 1),
-            (["yes"], [], [], True, ["lalala", "don't merge", "yes"], 0),
-            (["yes"], [], [("foobar", "test>1")], False, [], 1),
-            (["yes"], [], [("foobar", "test>1")], False, ["lalala"], 1),
-            (["yes"], [], [("foobar", "test>1")], False, ["lalala", "foobar"], 1),
-            (["yes"], [], [("foobar", "test>1")], False, ["lalala", "yes"], 0),
+            (["yes"], [], [], False, [], "", 1),
+            (["yes"], [], [], False, ["lalala"], "", 1),
+            (["yes"], [], [], False, ["lalala", "don't merge"], "", 1),
+            (["yes*"], [], [], False, ["lalala", "don't merge", "yes"], "", 0),
+            (["yes"], [], [], True, [], "", 1),
+            (["yes"], [], [], True, ["lalala"], "", 1),
+            (["yes"], [], [], True, ["lalala", "don't merge"], "", 1),
+            (["yes"], [], [], True, ["lalala", "don't merge", "yes"], "", 0),
+            (["yes"], [], [("foobar", "test>1")], False, [], "", 1),
+            (["yes"], [], [("foobar", "test>1")], False, ["lalala"], "", 1),
+            (["yes"], [], [("foobar", "test>1")], False, ["lalala", "foobar"], "", 1),
+            (["yes"], [], [("foobar", "test>1")], False, ["lalala", "yes"], "", 0),
             (
                 ["yes"],
                 [],
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar", "don't merge"],
+                "",
                 1,
             ),
             (
@@ -447,17 +490,19 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar", "don't merge", "yes"],
+                "",
                 1,
             ),
-            (["yes"], [], [("foobar", "test>1")], True, [], 1),
-            (["yes"], [], [("foobar", "test>1")], True, ["lalala"], 1),
-            (["yes"], [], [("foobar", "test>1")], True, ["lalala", "foobar"], 1),
+            (["yes"], [], [("foobar", "test>1")], True, [], "", 1),
+            (["yes"], [], [("foobar", "test>1")], True, ["lalala"], "", 1),
+            (["yes"], [], [("foobar", "test>1")], True, ["lalala", "foobar"], "", 1),
             (
                 ["yes"],
                 [],
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar", "don't merge"],
+                "",
                 1,
             ),
             (
@@ -466,25 +511,51 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar", "don't merge", "yes"],
+                "",
                 0,
             ),
-            (["yes"], ["don't merge"], [], False, [], 1),
-            (["yes"], ["don't merge"], [], False, ["lalala"], 1),
-            (["yes"], ["don't merge"], [], False, ["lalala", "don't merge"], 1),
-            (["yes"], ["don't *ge"], [], False, ["lalala", "don't merge", "yes"], 1),
-            (["yes"], ["don't merge"], [], True, [], 1),
-            (["yes"], ["don't merge"], [], True, ["lalala"], 1),
-            (["yes"], ["don't *rge"], [], True, ["lalala", "don't merge"], 1),
-            (["yes"], ["don't merge"], [], True, ["lalala", "yes"], 0),
-            (["yes"], ["don't merge"], [], True, ["lalala", "don't merge", "yes"], 1),
-            (["ye*"], ["don't merge"], [("foobar", "test>1")], False, [], 1),
-            (["yes"], ["don't merge"], [("foobar", "test>1")], False, ["lalala"], 1),
+            (["yes"], ["don't merge"], [], False, [], "", 1),
+            (["yes"], ["don't merge"], [], False, ["lalala"], "", 1),
+            (["yes"], ["don't merge"], [], False, ["lalala", "don't merge"], "", 1),
+            (
+                ["yes"],
+                ["don't *ge"],
+                [],
+                False,
+                ["lalala", "don't merge", "yes"],
+                "",
+                1,
+            ),
+            (["yes"], ["don't merge"], [], True, [], "", 1),
+            (["yes"], ["don't merge"], [], True, ["lalala"], "", 1),
+            (["yes"], ["don't *rge"], [], True, ["lalala", "don't merge"], "", 1),
+            (["yes"], ["don't merge"], [], True, ["lalala", "yes"], "", 0),
+            (
+                ["yes"],
+                ["don't merge"],
+                [],
+                True,
+                ["lalala", "don't merge", "yes"],
+                "",
+                1,
+            ),
+            (["ye*"], ["don't merge"], [("foobar", "test>1")], False, [], "", 1),
+            (
+                ["yes"],
+                ["don't merge"],
+                [("foobar", "test>1")],
+                False,
+                ["lalala"],
+                "",
+                1,
+            ),
             (
                 ["yes"],
                 ["don't merge"],
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar"],
+                "",
                 1,
             ),
             (
@@ -493,6 +564,7 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar", "don't merge"],
+                "",
                 1,
             ),
             (
@@ -501,6 +573,7 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar", "don't merge", "yes"],
+                "",
                 1,
             ),
             (
@@ -509,16 +582,18 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 False,
                 ["lalala", "foobar", "yes"],
+                "",
                 1,
             ),
-            (["yes"], ["don't merge"], [("foobar", "test>1")], True, [], 1),
-            (["yes"], ["don't merge"], [("foobar", "test>1")], True, ["lalala"], 1),
+            (["yes"], ["don't merge"], [("foobar", "test>1")], True, [], "", 1),
+            (["yes"], ["don't merge"], [("foobar", "test>1")], True, ["lalala"], "", 1),
             (
                 ["yes"],
                 ["don't merge"],
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar"],
+                "",
                 1,
             ),
             (
@@ -527,6 +602,7 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar", "don't merge"],
+                "",
                 1,
             ),
             (
@@ -535,6 +611,7 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar", "yes"],
+                "",
                 0,
             ),
             (
@@ -543,25 +620,39 @@ if pytest:  # noqa: C901
                 [("foobar", "test>1")],
                 True,
                 ["lalala", "foobar", "don't merge", "yes"],
+                "",
                 1,
             ),
         ],
     )
     # pylint: disable=too-many-arguments
     def test_check_labels(
-        monkeypatch, set_labels, unset_labels, cond_labels, cond_res, pull_labels, exp
+        monkeypatch,
+        set_labels,
+        unset_labels,
+        cond_labels,
+        cond_res,
+        pull_labels,
+        missing_approvals_label,
+        exp,
     ):
         pull = MockPull(labels=[MockLabel(name) for name in pull_labels])
         monkeypatch.setattr(
-            sys.modules[__name__], "check_condition", lambda x, y: cond_res
+            sys.modules[__name__], "check_condition", lambda x, y, z: cond_res
         )
-        assert check_labels(set_labels, unset_labels, cond_labels, pull) == exp
+        assert (
+            check_labels(
+                set_labels, unset_labels, cond_labels, missing_approvals_label, pull
+            )
+            == exp
+        )
 
     def test_main(monkeypatch):
         class MockArgs:
             set_labels = ["yes"]
             unset_labels = []
             cond_labels = []
+            missing_approvals_label = ""
 
         class MockRepo:
             def get_pull(self, pull_no):
