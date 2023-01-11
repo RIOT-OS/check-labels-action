@@ -16,7 +16,7 @@ import github
 
 try:
     import pytest
-except ImportError:
+except ImportError:  # pragma: no cover
     pytest = None
 
 
@@ -258,7 +258,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main())  # pragma: no cover
 
 
 if pytest:  # noqa: C901
