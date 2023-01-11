@@ -20,8 +20,7 @@ except ImportError:
     pytest = None
 
 
-# pylint: disable=too-many-branches
-def cs_string_list(value):
+def cs_string_list(value):  # pylint: disable=too-many-branches
     """
     Parses a comma separated strings into a python list
 
@@ -91,7 +90,7 @@ def cs_string_list(value):
                 res[-1] += char
         last_char = char
     if open_char:
-        raise ValueError("Unterminated string '{}'".format(res[-1]))
+        raise ValueError(f"Unterminated string '{res[-1]}'")
     if not res[-1] and last_char not in [",", "'", '"']:
         del res[-1]
     if res and strip_str:  # strip remaining unquoted string
@@ -99,8 +98,7 @@ def cs_string_list(value):
     return res
 
 
-# pylint: disable=too-many-branches
-def cs_2tuple_list(value):
+def cs_2tuple_list(value):  # pylint: disable=too-many-branches
     """
     Parses a comma separated 2-tuple strings into a python list of tuples
 
@@ -134,14 +132,14 @@ def cs_2tuple_list(value):
         elif char == "(":
             in_tuple = True
         else:
-            raise ValueError("Unexpected character '{}' after '{}'".format(char, res))
+            raise ValueError(f"Unexpected character '{char}' after '{res}'")
     if in_tuple or quote_char:
-        raise ValueError("Unterminated tuple {}".format(res[-1]))
+        raise ValueError(f"Unterminated tuple {res[-1]}")
     # remove empty string stored as state
     if not isinstance(res[-1], tuple):
         del res[-1]
     if any(not isinstance(e, tuple) or len(e) != 2 for e in res):
-        raise ValueError("Unexpected value in {}".format(res))
+        raise ValueError(f"Unexpected value in {res}")
     return res
 
 
@@ -156,7 +154,7 @@ def get_pull_no(ref):
     match = re.search("refs/pull/([0-9]+)/", ref)
     if match:
         return int(match[1])
-    raise ValueError("Unable to get pull request number from ref {}".format(ref))
+    raise ValueError(f"Unable to get pull request number from ref {ref}")
 
 
 def parse_condition(condition):
@@ -193,7 +191,7 @@ def check_condition(pull, condition):
     except KeyError:
         # We don't want the original traceback here
         # pylint: disable=raise-missing-from
-        raise ValueError("Unrecognized condition {}".format(condition))
+        raise ValueError(f"Unrecognized condition {condition}")
 
 
 def check_labels(set_labels, unset_labels, cond_labels, pull):
@@ -205,10 +203,10 @@ def check_labels(set_labels, unset_labels, cond_labels, pull):
                 set_labels_check[i] = True
         for unset_label in unset_labels:
             if fnmatch.fnmatch(pull_label, unset_label):
-                print("{} are expected not to be set".format(", ".join(unset_labels)))
+                print(f"{', '.join(unset_labels)} are expected not to be set")
                 return 1
     if not all(set_labels_check):
-        print("{} are expected to be set".format(", ".join(set_labels)))
+        print(f"{', '.join(set_labels)} are expected to be set")
         return 1
     res = 0
     for cond_label, condition in cond_labels:
@@ -216,11 +214,7 @@ def check_labels(set_labels, unset_labels, cond_labels, pull):
             if fnmatch.fnmatch(pull_label, cond_label) and not check_condition(
                 pull, condition
             ):
-                print(
-                    "Condition {} for label {} not fulfilled".format(
-                        condition, pull_label
-                    )
-                )
+                print(f"Condition {condition} for label {pull_label} not fulfilled")
                 # favor listing all failed conditions over early exit
                 res = 1
     return res
@@ -267,7 +261,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-if pytest:
+if pytest:  # noqa: C901
 
     @pytest.mark.parametrize(
         "value, exp",
@@ -568,7 +562,6 @@ if pytest:
             cond_labels = []
 
         class MockRepo:
-            # pylint: disable=no-self-use
             def get_pull(self, pull_no):
                 return pull_no
 
@@ -576,7 +569,7 @@ if pytest:
             def __init__(self, *args, **kwargs):
                 pass
 
-            # pylint: disable=no-self-use, unused-argument
+            # pylint: disable=unused-argument
             def get_repo(self, name):
                 return MockRepo()
 
