@@ -226,19 +226,19 @@ def main():
         "set_labels",
         default="",
         type=cs_string_list,
-        help="Comma-seperated list of labels required to be set. " "default: ''",
+        help="Comma-separated list of labels required to be set. " "default: ''",
     )
     parser.add_argument(
         "unset_labels",
         default="",
         type=cs_string_list,
-        help="Comma-seperated list of labels required not to be set. " "default: ''",
+        help="Comma-separated list of labels required not to be set. " "default: ''",
     )
     parser.add_argument(
         "cond_labels",
         default="",
         type=cs_2tuple_list,
-        help="Comma-seperated list of (label, condition) for labels "
+        help="Comma-separated list of (label, condition) for labels "
         "introducing a conditions. "
         "default: ''. "
         "Supported conditions: 'review.approvals>x' "
