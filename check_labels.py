@@ -361,6 +361,16 @@ if pytest:  # noqa: C901
             self.labels = labels
             self.reviews = reviews
 
+        def add_to_labels(self, label):
+            if self.labels:
+                self.labels.append(label)
+            else:
+                self.labels = [label]
+
+        def remove_from_labels(self, label):
+            if self.labels and label in self.labels:
+                self.labels.remove(label)
+
         def get_labels(self):
             for label in self.labels:
                 yield label
@@ -370,18 +380,53 @@ if pytest:  # noqa: C901
                 yield review
 
     @pytest.mark.parametrize(
-        "value, reviews, exp",
+        "value, labels, reviews, missing_approvals_label, exp",
         [
-            (["review.approvals", 2], ["APPROVED", "APPROVED", "APPROVED"], True),
-            (["review.approvals", 2], ["APPROVED", "APPROVED"], False),
-            (["review.approvals", 1], ["APPROVED", "APPROVED"], True),
-            (["review.approvals", 1], ["COMMENT", "APPROVED"], False),
-            (["review.approvals", 1], ["COMMENT"], False),
+            (
+                ["review.approvals", 2],
+                None,
+                ["APPROVED", "APPROVED", "APPROVED"],
+                "",
+                True,
+            ),
+            (["review.approvals", 2], None, ["APPROVED", "APPROVED"], "", False),
+            (["review.approvals", 1], None, ["APPROVED", "APPROVED"], "", True),
+            (["review.approvals", 1], None, ["COMMENT", "APPROVED"], "", False),
+            (["review.approvals", 1], None, ["COMMENT"], "", False),
+            (["review.approvals", 1], None, ["APPROVED"], "DON'T MERGE", False),
+            (["review.approvals", 1], ["FOOBAR"], ["APPROVED"], "DON'T MERGE", False),
+            (
+                ["review.approvals", 1],
+                None,
+                ["APPROVED", "APPROVED"],
+                "DON'T MERGE",
+                True,
+            ),
+            (
+                ["review.approvals", 1],
+                ["FOOBAR"],
+                ["APPROVED", "APPROVED"],
+                "DON'T MERGE",
+                True,
+            ),
+            (
+                ["review.approvals", 1],
+                ["DON'T MERGE", "FOOBAR"],
+                ["APPROVED", "APPROVED"],
+                "DON'T MERGE",
+                True,
+            ),
         ],
     )
-    def test_check_review_approvals(value, reviews, exp):
-        pull = MockPull(reviews=[MockReview(state) for state in reviews])
-        assert check_review_approvals(pull, value, "") == exp
+    def test_check_review_approvals(
+        value, labels, reviews, missing_approvals_label, exp
+    ):
+        pull = MockPull(labels=labels, reviews=[MockReview(state) for state in reviews])
+        assert check_review_approvals(pull, value, missing_approvals_label) == exp
+        if not exp and missing_approvals_label:
+            assert missing_approvals_label in pull.labels
+        if exp and missing_approvals_label:
+            assert not pull.labels or missing_approvals_label not in pull.labels
 
     def test_check_condition(monkeypatch):
         pull = MockPull()
@@ -647,7 +692,16 @@ if pytest:  # noqa: C901
             == exp
         )
 
-    def test_main(monkeypatch):
+    @pytest.mark.parametrize(
+        "missing_approvals_label, get_label_errors, exp",
+        [
+            pytest.param("", False, 0, id="no missing_approvals_label"),
+            pytest.param("DON'T MERGE", False, 0, id="with missing_approvals_label"),
+            pytest.param("DON'T MERGE", True, 1, id="with missing_approvals_label"),
+            pytest.param("DON'T MERGE", False, 0, id="with missing_approvals_label"),
+        ],
+    )
+    def test_main(monkeypatch, missing_approvals_label, get_label_errors, exp):
         class MockArgs:
             set_labels = ["yes"]
             unset_labels = []
@@ -658,6 +712,9 @@ if pytest:  # noqa: C901
             def get_pull(self, pull_no):
                 return pull_no
 
+            def get_label(self, label):
+                raise github.GithubException(status=404, data="")
+
         class MockGithub:
             def __init__(self, *args, **kwargs):
                 pass
@@ -666,6 +723,9 @@ if pytest:  # noqa: C901
             def get_repo(self, name):
                 return MockRepo()
 
+        MockArgs.missing_approvals_label = missing_approvals_label
+        if not get_label_errors:
+            MockRepo.get_label = lambda self, label: label
         monkeypatch.setattr(
             argparse.ArgumentParser, "add_argument", lambda *args, **kwargs: None
         )
@@ -681,4 +741,4 @@ if pytest:  # noqa: C901
         )
         monkeypatch.setenv("GITHUB_REPOSITORY", "test")
         monkeypatch.setenv("GITHUB_REF", "foobar")
-        assert main() == 0
+        assert main() == exp
