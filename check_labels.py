@@ -185,7 +185,14 @@ def check_review_approvals(pull, condition, missing_approvals_label):
                     f" removing label '{missing_approvals_label}'"
                 )
                 if missing_approvals_label:
-                    pull.remove_from_labels(missing_approvals_label)
+                    try:
+                        pull.remove_from_labels(missing_approvals_label)
+                    except github.GithubException as exc:
+                        # may happen if label was already removed => log but don't error
+                        print(
+                            f"Error on removing {missing_approvals_label}, "
+                            f"{exc.status}: {exc.data['message']}"
+                        )
                 return True
 
     if missing_approvals_label and condition[1] > 0:
