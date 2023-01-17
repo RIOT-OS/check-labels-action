@@ -340,6 +340,11 @@ if pytest:  # noqa: C901
         with pytest.raises(ValueError):
             get_pull_no("foobar")
 
+    def test_get_pull_from_env(monkeypatch):
+        monkeypatch.setitem(os.environ, "INPUT_PULL_REQUEST", "59706")
+        assert get_pull_no("refs/pull/12345/head") == 12345
+        assert get_pull_no("foobar") == 59706
+
     @pytest.mark.parametrize(
         "value",
         ["foobar", "foobar>3>test"],
@@ -378,8 +383,13 @@ if pytest:  # noqa: C901
                 self.labels = [label]
 
         def remove_from_labels(self, label):
-            if self.labels and label in self.labels:
-                self.labels.remove(label)
+            if self.labels is not None:
+                try:
+                    self.labels.remove(label)
+                except ValueError as exc:
+                    raise github.GithubException(
+                        status=404, data={"message": str(exc)}
+                    ) from exc
 
         def get_labels(self):
             for label in self.labels:
