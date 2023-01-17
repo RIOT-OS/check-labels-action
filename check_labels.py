@@ -154,6 +154,9 @@ def get_pull_no(ref):
     match = re.search("refs/pull/([0-9]+)/", ref)
     if match:
         return int(match[1])
+    print(os.environ)
+    if os.environ.get("INPUT_PULL_REQUEST"):
+        return int(os.environ["INPUT_PULL_REQUEST"])
     raise ValueError(f"Unable to get pull request number from ref {ref}")
 
 

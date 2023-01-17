@@ -22,6 +22,10 @@ inputs:
     description: '(optional) label to be set if the review approval count condition fails'
     required: false
     default: ''
+  pull_request:
+    description: '(optional) PR number of the triggering PR'
+    required: false
+    default: ''
 runs:
   using: 'docker'
   image: 'Dockerfile'
